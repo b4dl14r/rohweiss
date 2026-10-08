@@ -1,0 +1,153 @@
+// Ein-Bild-Variante der Hero-Fahrt: ein Foto plus Tiefenkarte, in WebGL als 2.5D-Kamerafahrt gerendert.
+import{a as MARK_FILL,c as smooth,i as MARK_PIN,l as timeline,t as MARK_END}from"./fahrt-Bbbismjj.js";
+
+const BASE=`/rohweiss/hero/`;
+const IMG_ASPECT=2000/1116;
+const EYE=[.6313,.3338];         // Pupille (Bild-UV, y nach unten)
+const HEAD=[.612,.37];           // Bildmitte der Kopf-Einstellung
+const HEAD_ZOOM=2.15;
+const EYE_ZOOM=46;               // Endzoom ins Auge (relativ zur Kopf-Einstellung)
+const BG=[239/255,235/255,226/255];
+const FG=[11/255,11/255,10/255];
+
+const VS=`attribute vec2 p;varying vec2 vS;void main(){vS=p*.5+.5;vS.y=1.-vS.y;gl_Position=vec4(p,0.,1.);}`;
+const FS=`precision highp float;
+varying vec2 vS;
+uniform sampler2D uImg,uDep;
+uniform vec2 uSpan,uC,uPar,uPx;
+uniform float uZ,uRoll,uFocus,uDark,uVig,uTime;
+uniform vec3 uBg,uFg;
+float dep(vec2 uv){return texture2D(uDep,clamp(uv,0.,1.)).r;}
+float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
+void main(){
+  vec2 s=vS-.5;
+  float cr=cos(uRoll),sr=sin(uRoll);
+  s=vec2(cr*s.x-sr*s.y,sr*s.x+cr*s.y);
+  vec2 base=uC+s*uSpan/uZ;
+  vec2 uv=base;
+  for(int i=0;i<6;i++){uv=base-uPar*(dep(uv)-uFocus);}
+  vec2 cuv=clamp(uv,vec2(0.,0.),vec2(1.,1.));
+  vec4 t=texture2D(uImg,cuv);
+  float inside=step(0.,uv.x)*step(uv.x,1.)*step(0.,uv.y);
+  t*=inside;
+  vec3 col=uBg*(1.-t.a)+t.rgb;
+  // weiches Abdunkeln zum Rand, wächst mit der Fahrt ins Auge
+  float r=length((vS-.5)*vec2(uPx.x/uPx.y,1.));
+  float vig=smoothstep(.15,.95,r)*uVig;
+  col=mix(col,uFg,clamp(vig+uDark,0.,1.));
+  col+=(hash(vS*uPx+fract(uTime))-.5)*.018;
+  gl_FragColor=vec4(col,1.);
+}`;
+
+function loadImage(src){return new Promise((ok,no)=>{const i=new Image;i.decoding=`async`;i.onload=()=>ok(i);i.onerror=no;i.src=src;});}
+function pot(img,w,h){const c=document.createElement(`canvas`);c.width=w;c.height=h;c.getContext(`2d`).drawImage(img,0,0,w,h);return c;}
+function damp(a,b,k,dt){return a+(b-a)*(1-Math.exp(-k*dt));}
+function easeInOut(x){x=Math.min(Math.max(x,0),1);return x*x*x*(x*(x*6-15)+10);}
+
+function createScene(host){
+  const canvas=document.createElement(`canvas`);
+  canvas.className=`hero__canvas`;
+  host.append(canvas);
+  const gl=canvas.getContext(`webgl`,{antialias:!1,alpha:!1,premultipliedAlpha:!1});
+  if(!gl)return{ready:Promise.reject(Error(`webgl`))};
+  const sh=(type,src)=>{const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s;};
+  const prog=gl.createProgram();
+  gl.attachShader(prog,sh(gl.VERTEX_SHADER,VS));gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,FS));gl.linkProgram(prog);gl.useProgram(prog);
+  const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+  const loc=gl.getAttribLocation(prog,`p`);gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,!1,0,0);
+  const U={};for(const n of[`uImg`,`uDep`,`uSpan`,`uC`,`uPar`,`uPx`,`uZ`,`uRoll`,`uFocus`,`uDark`,`uVig`,`uTime`,`uBg`,`uFg`])U[n]=gl.getUniformLocation(prog,n);
+  function tex(unit,src){
+    const t=gl.createTexture();gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,t);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,!0);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,src);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    const ext=gl.getExtension(`EXT_texture_filter_anisotropic`);
+    if(ext)gl.texParameterf(gl.TEXTURE_2D,ext.TEXTURE_MAX_ANISOTROPY_EXT,8);
+  }
+  gl.uniform3fv(U.uBg,BG);gl.uniform3fv(U.uFg,FG);
+  const coarse=window.matchMedia(`(pointer: coarse)`).matches;
+  const ready=Promise.all([loadImage(`${BASE}bild.webp`),loadImage(`${BASE}bild_tiefe.png`)]).then(([img,dep])=>{
+    tex(0,pot(img,2048,1024));tex(1,pot(dep,1024,512));
+    gl.uniform1i(U.uImg,0);gl.uniform1i(U.uDep,1);
+  });
+  let W=1,H=1;
+  return{canvas,ready,
+    resize(w,h){const dpr=Math.min(window.devicePixelRatio||1,coarse?1.5:2);W=Math.max(1,w);H=Math.max(1,h);canvas.width=Math.round(W*dpr);canvas.height=Math.round(H*dpr);gl.viewport(0,0,canvas.width,canvas.height);gl.uniform2f(U.uPx,canvas.width,canvas.height);},
+    size:()=>[W,H],
+    draw(c){
+      const A=W/H,span=A>IMG_ASPECT?[1,IMG_ASPECT/A]:[A/IMG_ASPECT,1];
+      gl.uniform2fv(U.uSpan,span);gl.uniform2fv(U.uC,c.c);gl.uniform2fv(U.uPar,c.par);
+      gl.uniform1f(U.uZ,c.z);gl.uniform1f(U.uRoll,c.roll);gl.uniform1f(U.uFocus,c.focus);
+      gl.uniform1f(U.uDark,c.dark);gl.uniform1f(U.uVig,c.vig);gl.uniform1f(U.uTime,c.time);
+      gl.drawArrays(gl.TRIANGLES,0,3);
+    }};
+}
+
+// Kamera für Scroll-Fortschritt e, ohne Glättung
+function shot(e,[W,H],ptr,time){
+  const{a,b,dark}=timeline(e);
+  const A=W/H,span=A>IMG_ASPECT?[1,IMG_ASPECT/A]:[A/IMG_ASPECT,1];
+  const k=easeInOut(a);
+  // Startbild: Kopf so weit wie möglich mittig, ohne den Bildrand zu zeigen
+  const z0=1.04,hx=span[0]/2/z0;
+  const c0=[Math.min(Math.max(.66,hx),1-hx),.5];
+  const zA=z0*(HEAD_ZOOM/z0)**k;
+  // Bogen statt Gerade: Kamera schwingt leicht über den Kopf
+  const arc=Math.sin(Math.PI*k);
+  let c=[c0[0]+(HEAD[0]-c0[0])*k+.018*arc,c0[1]+(HEAD[1]-c0[1])*k-.03*arc];
+  let z=zA;
+  if(b>0){
+    const kb=b*b*(3-2*b)*.35+b*.65;
+    const zb=EYE_ZOOM**kb;
+    z=HEAD_ZOOM*zb;
+    c=[EYE[0]+(c[0]-EYE[0])/zb,EYE[1]+(c[1]-EYE[1])/zb];
+  }
+  // Seitwärtsfahrt der Kamera: erzeugt die Tiefenparallaxe, klingt beim Eintauchen ins Auge ab
+  const sway=1/Math.sqrt(z);
+  const idle=[Math.sin(time*.37)*.004+Math.sin(time*.13)*.003,Math.cos(time*.29)*.003];
+  const par=[(.035*(1-k)-.02*arc+idle[0]+ptr[0]*.012)*sway,(.012*(1-k)+.014*arc+idle[1]+ptr[1]*.008)*sway];
+  return{c,z,par,roll:(.012*(1-k)-.018*arc)*(1-b)+Math.sin(time*.21)*.002,focus:.55+.3*k,dark,vig:.08*k+.75*smooth(b/.7),time};
+}
+
+function initFahrt(hero,ctl){
+  const stage=hero.querySelector(`.hero__stage`)??hero;
+  const host=document.createElement(`div`);
+  host.className=`hero__scene`;host.setAttribute(`aria-hidden`,`true`);
+  stage.prepend(host);
+  const scene=createScene(host);
+  const darkEl=document.createElement(`div`);darkEl.className=`hero__dark`;host.append(darkEl);
+
+  // Wortmarke, Titel und Fuß wie in der 3D-Fahrt
+  const fade=[...stage.querySelectorAll(`.hero__title, .hero__foot`)],mark=stage.querySelector(`.hero__mark`),wide=window.matchMedia(`(min-width: 60em)`),m={x:0,y:0,scale:1};
+  function measure(){if(!mark)return;mark.style.transform=``;const r=mark.getBoundingClientRect(),s=stage.getBoundingClientRect();m.x=s.left+s.width/2-(r.left+r.width*MARK_PIN[0]);m.y=s.top+s.height/2-(r.top+r.height*MARK_PIN[1]);m.scale=1.25*Math.hypot(s.width/2/(r.width*MARK_FILL[0]),s.height/2/(r.height*MARK_FILL[1]));}
+  ctl.register({render(e){const n=Math.min(Math.max(e/MARK_END,0),1),o=1-smooth(n/.55);for(const el of fade){el.style.opacity=String(o);el.style.visibility=o>0?`visible`:`hidden`;}if(!mark)return;if(!wide.matches){mark.style.transform=``;mark.style.opacity=String(o);mark.style.visibility=o>0?`visible`:`hidden`;return;}const i=1-(1-n)*(1-n),s=m.scale**n;mark.style.transform=n>0?`translate(${(m.x*i).toFixed(1)}px, ${(m.y*i).toFixed(1)}px) scale(${s.toFixed(4)})`:``;mark.style.opacity=String(1-smooth((n-.88)/.12));mark.style.visibility=n<1?`visible`:`hidden`;},resize(){measure();}});
+
+  const ready=scene.ready.then(()=>{
+    let progress=0,soft=0,last=performance.now(),visible=!0,raf=0,first=!0;
+    const ptr=[0,0],ptrT=[0,0];
+    if(!window.matchMedia(`(pointer: coarse)`).matches)window.addEventListener(`pointermove`,ev=>{ptrT[0]=ev.clientX/innerWidth-.5;ptrT[1]=ev.clientY/innerHeight-.5;},{passive:!0});
+    function frame(now){
+      raf=0;
+      const dt=Math.min(.1,(now-last)/1e3);last=now;
+      // etwas Trägheit über dem Lenis-Scroll, damit die Kamera nachschwingt statt zu kleben
+      soft=first?progress:damp(soft,progress,6,dt);first=!1;
+      ptr[0]=damp(ptr[0],ptrT[0],2.5,dt);ptr[1]=damp(ptr[1],ptrT[1],2.5,dt);
+      const cam=shot(soft,scene.size(),ptr,now/1e3);
+      scene.draw(cam);
+      darkEl.style.opacity=String(cam.dark);
+      if(visible&&cam.dark<1)raf=requestAnimationFrame(frame);
+    }
+    const kick=()=>{if(!raf&&visible){last=performance.now();raf=requestAnimationFrame(frame);}};
+    new IntersectionObserver(([en])=>{visible=en.isIntersecting;kick();}).observe(hero);
+    hero.dataset.scene=`ready`;
+    ctl.register({render(e){progress=e;kick();},resize(w,h){scene.resize(w,h);kick();}});
+    document.dispatchEvent(new CustomEvent(`rw:hero-ready`));
+  });
+  ready.catch(()=>{hero.dataset.scene=`failed`;});
+  return{ready};
+}
+export{initFahrt};
