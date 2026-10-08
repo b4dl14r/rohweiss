@@ -3,7 +3,7 @@ import{a as MARK_FILL,c as smooth,i as MARK_PIN,l as timeline,t as MARK_END}from
 
 const BASE=`/rohweiss/hero/`;
 const IMG_ASPECT=2000/1116;
-const EYE=[.6313,.3338];         // Pupille (Bild-UV, y nach unten)
+const EYE=[.6305,.3328];         // dunkles Pupillenloch (Bild-UV, y nach unten): die Fahrt endet im Dunkeln
 const HEAD=[.612,.37];           // Bildmitte der Kopf-Einstellung
 const HEAD_ZOOM=2.15;
 const EYE_ZOOM=46;               // Endzoom ins Auge (relativ zur Kopf-Einstellung)
@@ -32,7 +32,7 @@ f+`precision highp float;
 varying vec2 vS;
 uniform sampler2D uImg,uDep;
 uniform vec2 uSpan,uC,uPar,uPx;
-uniform float uZ,uRoll,uFocus,uDark,uVig,uTime;
+uniform float uZ,uRoll,uFocus,uDark,uVig,uTime,uBlur,uGrain,uTun;
 uniform vec3 uBg,uFg;
 float dep(vec2 uv){return DEP(clamp(uv,0.,1.)).r;}
 float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
@@ -56,13 +56,21 @@ void main(){
     tP=t;hP=h;
   }
   vec4 t=IMG(clamp(uv,0.,1.));
+  // Zoom-Blur zur Bildmitte: bei starker Vergrößerung liest sich die Unschärfe als Tempo statt als fehlende Auflösung
+  if(uBlur>0.){
+    vec2 d=(base-uC)*uBlur;
+    for(int j=1;j<8;j++)t+=IMG(clamp(uv-d*float(j)/7.,0.,1.));
+    t/=8.;
+  }
   t*=step(0.,uv.x)*step(uv.x,1.)*step(0.,uv.y);
   vec3 col=uBg*(1.-t.a)+t.rgb;
   // weiches Abdunkeln zum Rand, wächst mit der Fahrt ins Auge
   float r=length((vS-.5)*vec2(uPx.x/uPx.y,1.));
   float vig=smoothstep(.15,.95,r)*uVig;
-  col=mix(col,uFg,clamp(vig+uDark,0.,1.));
-  col+=(hash(vS*uPx+fract(uTime))-.5)*.018;
+  // Tunnel: bei sehr starker Vergrößerung bleibt nur ein weicher Lichtkreis um die Pupille, der Rest sinkt ins Schwarz
+  float tun=smoothstep(.62-.5*uTun,1.05-.55*uTun,r)*uTun+.3*uTun*uTun;
+  col=mix(col,uFg,clamp(vig+uDark+tun,0.,1.));
+  col+=(hash(vS*uPx+fract(uTime))-.5)*uGrain;
   gl_FragColor=vec4(col,1.);
 }`];
 }
@@ -87,7 +95,7 @@ function createScene(host){
   const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);
   gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
   const loc=gl.getAttribLocation(prog,`p`);gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,!1,0,0);
-  const U={};for(const n of[`uImg`,`uDep`,`uSpan`,`uC`,`uPar`,`uPx`,`uZ`,`uRoll`,`uFocus`,`uDark`,`uVig`,`uTime`,`uBg`,`uFg`])U[n]=gl.getUniformLocation(prog,n);
+  const U={};for(const n of[`uImg`,`uDep`,`uSpan`,`uC`,`uPar`,`uPx`,`uZ`,`uRoll`,`uFocus`,`uDark`,`uVig`,`uTime`,`uBlur`,`uGrain`,`uTun`,`uBg`,`uFg`])U[n]=gl.getUniformLocation(prog,n);
   function tex(unit,src){
     const t=gl.createTexture();gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,t);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,!0);
@@ -115,6 +123,9 @@ function createScene(host){
       gl.uniform2fv(U.uSpan,span);gl.uniform2fv(U.uC,c.c);gl.uniform2fv(U.uPar,c.par);
       gl.uniform1f(U.uZ,c.z);gl.uniform1f(U.uRoll,c.roll);gl.uniform1f(U.uFocus,c.focus);
       gl.uniform1f(U.uDark,c.dark);gl.uniform1f(U.uVig,c.vig);gl.uniform1f(U.uTime,c.time);
+      // Fotopixel quer über den Bildschirm: unter ~480 wird das Foto weich, dann Blur, Korn und Tunnel hochfahren (geräteunabhängig)
+      const vis=span[0]*2000/c.z;
+      gl.uniform1f(U.uBlur,.16*smooth((480-vis)/395));gl.uniform1f(U.uGrain,.018+.045*smooth((480-vis)/400));gl.uniform1f(U.uTun,smooth((205-vis)/160));
       gl.drawArrays(gl.TRIANGLES,0,3);
     }};
 }
