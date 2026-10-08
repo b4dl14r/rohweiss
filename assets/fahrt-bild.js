@@ -5,7 +5,10 @@ const BASE=`/rohweiss/hero/`;
 const IMG_ASPECT=2000/1116;
 const EYE=[.6305,.3328];         // dunkles Pupillenloch (Bild-UV, y nach unten): die Fahrt endet im Dunkeln
 const HEAD=[.612,.37];           // Bildmitte der Kopf-Einstellung
-const HEAD_ZOOM=2.15;
+const HEAD_ZOOM=2.15,HEAD_ZOOM_WIDE=1.7; // quer etwas weiter, damit der ganze Kopf unter die Menüleiste passt
+const HAIR_TOP=71/1116;          // oberster Haaransatz (Bild-UV)
+const GAP=32;                    // Desktop: fester Abstand Haaransatz – Menüleiste in px
+const GAP_MARK=16;               // Mobil: fester Abstand Haaransatz – Wortmarke in px
 const EYE_ZOOM=46;               // Endzoom ins Auge (relativ zur Kopf-Einstellung)
 const BG=[239/255,235/255,226/255];
 const FG=[11/255,11/255,10/255];
@@ -117,10 +120,10 @@ function createScene(host){
     gl.uniform1i(U.uImg,0);gl.uniform1i(U.uDep,1);
   });
   let W=1,H=1;
-  // Rahmen: oben die fixierte Kopfleiste, unten die sichtbare Höhe (die Bühne ragt auf Mobilgeräten
+  // Rahmen: oben die fixierte Kopfleiste (nur Desktop), unten die sichtbare Höhe (die Bühne ragt auf Mobilgeräten
   // unter die Browser-Leisten: 100lvh + Überstand)
-  const header=document.querySelector(`.site-header`);let top=0;
-  const measureTop=()=>{top=header&&getComputedStyle(header).position===`fixed`?Math.max(0,header.getBoundingClientRect().bottom):0;};
+  const header=document.querySelector(`.site-header`),wideMq=window.matchMedia(`(min-width: 60em)`);let top=0;
+  const measureTop=()=>{top=header&&wideMq.matches&&getComputedStyle(header).position===`fixed`?Math.max(0,header.getBoundingClientRect().bottom):0;};
   const visB=()=>Math.max(top+1,Math.min(H,window.visualViewport?.height||window.innerHeight));
   const visH=()=>visB()-top;
   return{canvas,ready,
@@ -132,31 +135,35 @@ function createScene(host){
       gl.uniform2fv(U.uSpan,span);gl.uniform2fv(U.uC,c.c);gl.uniform2fv(U.uPar,c.par);
       gl.uniform1f(U.uZ,c.z);gl.uniform1f(U.uRoll,c.roll);gl.uniform1f(U.uFocus,c.focus);
       gl.uniform1f(U.uDark,c.dark);gl.uniform1f(U.uVig,c.vig);gl.uniform1f(U.uTime,c.time);
-      // CSS-Pixel pro Fotopixel: ab ~1.6x wird das Foto weich, dann Blur, Korn und Tunnel hochfahren
+      // CSS-Pixel pro Fotopixel: ab ~1.3x (Ende der Kopf-Einstellung) Blur, Korn und Tunnel hochfahren
       const mag=W*c.z/(span[0]*2000);
-      gl.uniform1f(U.uBlur,.2*smooth((mag-1.6)/8));gl.uniform1f(U.uGrain,.018+.05*smooth((mag-1.6)/12));gl.uniform1f(U.uTun,smooth((mag-4)/18));
+      gl.uniform1f(U.uBlur,.2*smooth((mag-1.3)/6));gl.uniform1f(U.uGrain,.018+.05*smooth((mag-1.3)/9));gl.uniform1f(U.uTun,smooth((mag-3.2)/15));
       gl.drawArrays(gl.TRIANGLES,0,3);
     }};
 }
 
 // Kamera für Scroll-Fortschritt e, ohne Glättung
-function shot(e,[W,H],time){
+function shot(e,[W,H],time,wide,pin){
   const{a,b,dark}=timeline(e);
   const A=W/H,span=A>IMG_ASPECT?[1,IMG_ASPECT/A]:[A/IMG_ASPECT,1];
   const k=easeInOut(a);
   // Startbild: Kopf so weit wie möglich mittig, ohne den Bildrand zu zeigen
-  // Hochkant zeigt rund ein Drittel der Bildbreite (Kopf und Schultern, unten bündig), quer füllt es
-  const z0=Math.min(1.04,span[0]/.3),hx=span[0]/2/z0;
+  // Mobil: Haaransatz 16 px unter der Wortmarke, Büste unten bündig – daraus folgt der Zoom
+  const z0=wide?Math.min(1.04,span[0]/.3):Math.min(1.6,Math.max(.5,(1-HAIR_TOP)*span[1]/(1-pin/H))),hx=span[0]/2/z0;
   const c0=[Math.min(Math.max(.66,hx),1-hx),.5];
-  const zA=z0*(HEAD_ZOOM/z0)**k;
+  const hz=wide?HEAD_ZOOM_WIDE:HEAD_ZOOM,zA=z0*(hz/z0)**k;
   // Bogen statt Gerade: Kamera schwingt leicht über den Kopf
   const arc=Math.sin(Math.PI*k);
   let c=[c0[0]+(HEAD[0]-c0[0])*k+.018*arc,c0[1]+(HEAD[1]-c0[1])*k-.03*arc];
   let z=zA;
+  // Haaransatz in festem Abstand halten: Desktop unter der Menüleiste während der ganzen Fahrt
+  // auf den Kopf, mobil unter der Wortmarke, dort weich gelöst, sobald der Kopf herangezoomt ist
+  const pinY=HAIR_TOP+(.5-pin/H)*span[1]/zA;
+  c[1]=wide?pinY:c[1]+(pinY-c[1])*(1-k);
   if(b>0){
     const kb=b*b*(3-2*b)*.35+b*.65;
     const zb=EYE_ZOOM**kb;
-    z=HEAD_ZOOM*zb;
+    z=hz*zb;
     c=[EYE[0]+(c[0]-EYE[0])/zb,EYE[1]+(c[1]-EYE[1])/zb];
   }
   // Seitwärtsfahrt der Kamera: erzeugt die Tiefenparallaxe; beim Eintauchen ins Auge ganz aus,
@@ -181,8 +188,8 @@ function initFahrt(hero,ctl){
   const darkEl=document.createElement(`div`);darkEl.className=`hero__dark`;host.append(darkEl);
 
   // Wortmarke, Titel und Fuß wie in der 3D-Fahrt
-  const fade=[...stage.querySelectorAll(`.hero__title, .hero__foot`)],mark=stage.querySelector(`.hero__mark`),wide=window.matchMedia(`(min-width: 60em)`),m={x:0,y:0,scale:1};
-  function measure(){if(!mark)return;mark.style.transform=``;const r=mark.getBoundingClientRect(),s=stage.getBoundingClientRect();m.x=s.left+s.width/2-(r.left+r.width*MARK_PIN[0]);m.y=s.top+s.height/2-(r.top+r.height*MARK_PIN[1]);m.scale=1.25*Math.hypot(s.width/2/(r.width*MARK_FILL[0]),s.height/2/(r.height*MARK_FILL[1]));}
+  const fade=[...stage.querySelectorAll(`.hero__title, .hero__foot`)],mark=stage.querySelector(`.hero__mark`),wide=window.matchMedia(`(min-width: 60em)`),m={x:0,y:0,scale:1,markBottom:0};
+  function measure(){if(!mark)return;mark.style.transform=``;const r=mark.getBoundingClientRect(),s=stage.getBoundingClientRect();m.markBottom=r.bottom-s.top;m.x=s.left+s.width/2-(r.left+r.width*MARK_PIN[0]);m.y=s.top+s.height/2-(r.top+r.height*MARK_PIN[1]);m.scale=1.25*Math.hypot(s.width/2/(r.width*MARK_FILL[0]),s.height/2/(r.height*MARK_FILL[1]));}
   ctl.register({render(e){const n=Math.min(Math.max(e/MARK_END,0),1),o=1-smooth(n/.55);for(const el of fade){el.style.opacity=String(o);el.style.visibility=o>0?`visible`:`hidden`;}if(!mark)return;if(!wide.matches){mark.style.transform=``;mark.style.opacity=String(o);mark.style.visibility=o>0?`visible`:`hidden`;return;}const i=1-(1-n)*(1-n),s=m.scale**n;mark.style.transform=n>0?`translate(${(m.x*i).toFixed(1)}px, ${(m.y*i).toFixed(1)}px) scale(${s.toFixed(4)})`:``;mark.style.opacity=String(1-smooth((n-.88)/.12));mark.style.visibility=n<1?`visible`:`hidden`;},resize(){measure();}});
 
   const ready=scene.ready.then(()=>{
@@ -192,7 +199,7 @@ function initFahrt(hero,ctl){
       const dt=Math.min(.1,(now-last)/1e3);last=now;
       // etwas Trägheit über dem Lenis-Scroll, damit die Kamera nachschwingt statt zu kleben
       soft=first?progress:damp(soft,progress,6,dt);first=!1;
-      const cam=shot(soft,scene.size(),now/1e3);
+      const cam=shot(soft,scene.size(),now/1e3,wide.matches,wide.matches?GAP:m.markBottom+GAP_MARK);
       scene.draw(cam);
       darkEl.style.opacity=String(cam.dark);
       if(visible&&cam.dark<1)raf=requestAnimationFrame(frame);
