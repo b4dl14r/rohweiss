@@ -110,7 +110,11 @@ function shot(e,[W,H],ptr,time){
   const sway=1/Math.sqrt(z);
   const idle=[Math.sin(time*.37)*.004+Math.sin(time*.13)*.003,Math.cos(time*.29)*.003];
   const par=[(.035*(1-k)-.02*arc+idle[0]+ptr[0]*.012)*sway,(.012*(1-k)+.014*arc+idle[1]+ptr[1]*.008)*sway];
-  return{c,z,par,roll:(.012*(1-k)-.018*arc)*(1-b)+Math.sin(time*.21)*.002,focus:.55+.3*k,dark,vig:.08*k+.75*smooth(b/.7),time};
+  const roll=(.012*(1-k)-.018*arc)*(1-b)+Math.sin(time*.21)*.002;
+  // Unterkante des Fotos (Büste abgeschnitten) nie ins Bild lassen, inkl. Drehung und Parallaxe
+  const hy=span[1]/2/z+Math.abs(roll)*span[0]/2/z;
+  c[1]=Math.min(c[1],1-hy-Math.abs(par[1])-.004);
+  return{c,z,par,roll,focus:.55+.3*k,dark,vig:.08*k+.75*smooth(b/.7),time};
 }
 
 function initFahrt(hero,ctl){
