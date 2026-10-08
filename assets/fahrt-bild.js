@@ -131,7 +131,7 @@ function createScene(host){
 }
 
 // Kamera für Scroll-Fortschritt e, ohne Glättung
-function shot(e,[W,H],ptr,time){
+function shot(e,[W,H],time){
   const{a,b,dark}=timeline(e);
   const A=W/H,span=A>IMG_ASPECT?[1,IMG_ASPECT/A]:[A/IMG_ASPECT,1];
   const k=easeInOut(a);
@@ -153,8 +153,9 @@ function shot(e,[W,H],ptr,time){
   // Seitwärtsfahrt der Kamera: erzeugt die Tiefenparallaxe; beim Eintauchen ins Auge ganz aus,
   // sonst verziehen Maus und Leerlauf das stark vergrößerte Gesicht (Morphen)
   const sway=Math.min(1,1/Math.sqrt(z))*(1-smooth(b/.3));
-  const idle=[Math.sin(time*.37)*.004+Math.sin(time*.13)*.003,Math.cos(time*.29)*.003];
-  const par=[(.028*(1-k)-.016*arc+idle[0]+ptr[0]*.01)*sway,(.01*(1-k)+.012*arc+idle[1]+ptr[1]*.007)*sway];
+  const idle=[Math.sin(time*.37)*.0015+Math.sin(time*.13)*.001,Math.cos(time*.29)*.001];
+  // bewusst klein: vor einfarbigem Grund zeigt sich Parallaxe nur als Verformung des Gesichts
+  const par=[(.009*(1-k)-.005*arc+idle[0])*sway,(.003*(1-k)+.004*arc+idle[1])*sway];
   const roll=(.012*(1-k)-.018*arc)*(1-b)+Math.sin(time*.21)*.002;
   // Unterkante des Fotos (Büste abgeschnitten) nie ins Bild lassen, inkl. Drehung und Parallaxe
   const hy=span[1]/2/z+Math.abs(roll)*span[0]/2/z;
@@ -177,15 +178,12 @@ function initFahrt(hero,ctl){
 
   const ready=scene.ready.then(()=>{
     let progress=0,soft=0,last=performance.now(),visible=!0,raf=0,first=!0;
-    const ptr=[0,0],ptrT=[0,0];
-    if(!window.matchMedia(`(pointer: coarse)`).matches)window.addEventListener(`pointermove`,ev=>{ptrT[0]=ev.clientX/innerWidth-.5;ptrT[1]=ev.clientY/innerHeight-.5;},{passive:!0});
     function frame(now){
       raf=0;
       const dt=Math.min(.1,(now-last)/1e3);last=now;
       // etwas Trägheit über dem Lenis-Scroll, damit die Kamera nachschwingt statt zu kleben
       soft=first?progress:damp(soft,progress,6,dt);first=!1;
-      ptr[0]=damp(ptr[0],ptrT[0],2.5,dt);ptr[1]=damp(ptr[1],ptrT[1],2.5,dt);
-      const cam=shot(soft,scene.size(),ptr,now/1e3);
+      const cam=shot(soft,scene.size(),now/1e3);
       scene.draw(cam);
       darkEl.style.opacity=String(cam.dark);
       if(visible&&cam.dark<1)raf=requestAnimationFrame(frame);
