@@ -123,9 +123,9 @@ function createScene(host){
       gl.uniform2fv(U.uSpan,span);gl.uniform2fv(U.uC,c.c);gl.uniform2fv(U.uPar,c.par);
       gl.uniform1f(U.uZ,c.z);gl.uniform1f(U.uRoll,c.roll);gl.uniform1f(U.uFocus,c.focus);
       gl.uniform1f(U.uDark,c.dark);gl.uniform1f(U.uVig,c.vig);gl.uniform1f(U.uTime,c.time);
-      // Fotopixel quer über den Bildschirm: unter ~480 wird das Foto weich, dann Blur, Korn und Tunnel hochfahren (geräteunabhängig)
+      // Fotopixel quer über den Bildschirm: unter ~600 wird das Foto weich, dann Blur, Korn und Tunnel hochfahren (geräteunabhängig)
       const vis=span[0]*2000/c.z;
-      gl.uniform1f(U.uBlur,.16*smooth((480-vis)/395));gl.uniform1f(U.uGrain,.018+.045*smooth((480-vis)/400));gl.uniform1f(U.uTun,smooth((205-vis)/160));
+      gl.uniform1f(U.uBlur,.18*smooth((600-vis)/480));gl.uniform1f(U.uGrain,.018+.05*smooth((600-vis)/500));gl.uniform1f(U.uTun,smooth((250-vis)/190));
       gl.drawArrays(gl.TRIANGLES,0,3);
     }};
 }
@@ -150,8 +150,9 @@ function shot(e,[W,H],ptr,time){
     z=HEAD_ZOOM*zb;
     c=[EYE[0]+(c[0]-EYE[0])/zb,EYE[1]+(c[1]-EYE[1])/zb];
   }
-  // Seitwärtsfahrt der Kamera: erzeugt die Tiefenparallaxe, klingt beim Eintauchen ins Auge ab
-  const sway=Math.min(1,1/Math.sqrt(z));
+  // Seitwärtsfahrt der Kamera: erzeugt die Tiefenparallaxe; beim Eintauchen ins Auge ganz aus,
+  // sonst verziehen Maus und Leerlauf das stark vergrößerte Gesicht (Morphen)
+  const sway=Math.min(1,1/Math.sqrt(z))*(1-smooth(b/.3));
   const idle=[Math.sin(time*.37)*.004+Math.sin(time*.13)*.003,Math.cos(time*.29)*.003];
   const par=[(.028*(1-k)-.016*arc+idle[0]+ptr[0]*.01)*sway,(.01*(1-k)+.012*arc+idle[1]+ptr[1]*.007)*sway];
   const roll=(.012*(1-k)-.018*arc)*(1-b)+Math.sin(time*.21)*.002;
