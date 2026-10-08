@@ -148,9 +148,11 @@ function shot(e,[W,H],time,wide,pin){
   const A=W/H,span=A>IMG_ASPECT?[1,IMG_ASPECT/A]:[A/IMG_ASPECT,1];
   const k=easeInOut(a);
   // Startbild: Kopf so weit wie möglich mittig, ohne den Bildrand zu zeigen
-  // Mobil: Haaransatz 16 px unter der Wortmarke, Büste unten bündig – daraus folgt der Zoom
-  const z0=wide?Math.min(1.04,span[0]/.3):Math.min(1.6,Math.max(.5,(1-HAIR_TOP)*span[1]/(1-pin/H))),hx=span[0]/2/z0;
-  const c0=[Math.min(Math.max(.66,hx),1-hx),.5];
+  // Büste unten bündig, Haaransatz im festen Abstand (Desktop: Menüleiste, mobil: Wortmarke) – daraus folgt
+  // der Startzoom; Desktop höchstens 1.04 (breite, niedrige Fenster zoomen dafür heraus)
+  const zFit=(1-HAIR_TOP)*span[1]/(1-pin/H);
+  const z0=wide?Math.min(1.04,zFit):Math.min(1.6,Math.max(.5,zFit)),hx=span[0]/2/z0;
+  const c0=[hx>=.5?.5:Math.min(Math.max(.66,hx),1-hx),1-span[1]/2/z0]; // Ansicht breiter als das Foto: mittig
   const hz=wide?HEAD_ZOOM_WIDE:HEAD_ZOOM,zA=z0*(hz/z0)**k;
   // Bogen statt Gerade: Kamera schwingt leicht über den Kopf
   const arc=Math.sin(Math.PI*k);
@@ -159,12 +161,14 @@ function shot(e,[W,H],time,wide,pin){
   // Haaransatz in festem Abstand halten: Desktop unter der Menüleiste während der ganzen Fahrt
   // auf den Kopf, mobil unter der Wortmarke, dort weich gelöst, sobald der Kopf herangezoomt ist
   const pinY=HAIR_TOP+(.5-pin/H)*span[1]/zA;
-  c[1]=wide?pinY:c[1]+(pinY-c[1])*(1-k);
+  c[1]=wide?Math.min(c[1],pinY):c[1]+(pinY-c[1])*(1-k);
   if(b>0){
     const kb=b*b*(3-2*b)*.35+b*.65;
     const zb=EYE_ZOOM**kb;
     z=hz*zb;
-    c=[EYE[0]+(c[0]-EYE[0])/zb,EYE[1]+(c[1]-EYE[1])/zb];
+    // ins Auge zoomen und es dabei sanft in die Bildmitte holen
+    const off=(1-smooth(b/.45))/zb;
+    c=[EYE[0]+(c[0]-EYE[0])*off,EYE[1]+(c[1]-EYE[1])*off];
   }
   // Seitwärtsfahrt der Kamera: erzeugt die Tiefenparallaxe; beim Eintauchen ins Auge ganz aus,
   // sonst verziehen Maus und Leerlauf das stark vergrößerte Gesicht (Morphen)
