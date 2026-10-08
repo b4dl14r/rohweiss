@@ -32,12 +32,14 @@ f+`precision highp float;
 varying vec2 vS;
 uniform sampler2D uImg,uDep;
 uniform vec2 uSpan,uC,uPar,uPx;
+uniform float uFr;
 uniform float uZ,uRoll,uFocus,uDark,uVig,uTime,uBlur,uGrain,uTun;
 uniform vec3 uBg,uFg;
 float dep(vec2 uv){return DEP(clamp(uv,0.,1.)).r;}
 float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
 void main(){
-  vec2 s=vS-.5;
+  // Rahmen = sichtbarer Teil der Bühne (oben bündig); der Rest liegt unter den Browser-Leisten
+  vec2 sv=vec2(vS.x-.5,vS.y/uFr-.5),s=sv;
   float cr=cos(uRoll),sr=sin(uRoll);
   s=vec2(cr*s.x-sr*s.y,sr*s.x+cr*s.y);
   vec2 base=uC+s*uSpan/uZ;
@@ -65,7 +67,7 @@ void main(){
   t*=step(0.,uv.x)*step(uv.x,1.)*step(0.,uv.y);
   vec3 col=uBg*(1.-t.a)+t.rgb;
   // weiches Abdunkeln zum Rand, wächst mit der Fahrt ins Auge
-  float r=length((vS-.5)*vec2(uPx.x/uPx.y,1.));
+  float A=uPx.x/(uPx.y*uFr),r=length(sv*vec2(A,1.))/min(A,1.); // Radius relativ zur kürzeren Seite
   float vig=smoothstep(.15,.95,r)*uVig;
   // Tunnel: bei sehr starker Vergrößerung bleibt nur ein weicher Lichtkreis um die Pupille, der Rest sinkt ins Schwarz
   float tun=smoothstep(.62-.5*uTun,1.05-.55*uTun,r)*uTun+.3*uTun*uTun;
@@ -95,7 +97,7 @@ function createScene(host){
   const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);
   gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
   const loc=gl.getAttribLocation(prog,`p`);gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,!1,0,0);
-  const U={};for(const n of[`uImg`,`uDep`,`uSpan`,`uC`,`uPar`,`uPx`,`uZ`,`uRoll`,`uFocus`,`uDark`,`uVig`,`uTime`,`uBlur`,`uGrain`,`uTun`,`uBg`,`uFg`])U[n]=gl.getUniformLocation(prog,n);
+  const U={};for(const n of[`uImg`,`uDep`,`uSpan`,`uC`,`uPar`,`uPx`,`uZ`,`uRoll`,`uFocus`,`uDark`,`uVig`,`uTime`,`uBlur`,`uGrain`,`uTun`,`uFr`,`uBg`,`uFg`])U[n]=gl.getUniformLocation(prog,n);
   function tex(unit,src){
     const t=gl.createTexture();gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,t);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,!0);
@@ -115,17 +117,20 @@ function createScene(host){
     gl.uniform1i(U.uImg,0);gl.uniform1i(U.uDep,1);
   });
   let W=1,H=1;
+  // sichtbare Höhe: Die Bühne ragt auf Mobilgeräten unter die Browser-Leisten (100lvh + Überstand)
+  const visH=()=>Math.max(1,Math.min(H,window.visualViewport?.height||window.innerHeight));
   return{canvas,ready,
     resize(w,h){const dpr=Math.min(window.devicePixelRatio||1,coarse?1.5:2);W=Math.max(1,w);H=Math.max(1,h);canvas.width=Math.round(W*dpr);canvas.height=Math.round(H*dpr);gl.viewport(0,0,canvas.width,canvas.height);gl.uniform2f(U.uPx,canvas.width,canvas.height);},
-    size:()=>[W,H],
+    size:()=>[W,visH()],
     draw(c){
-      const A=W/H,span=A>IMG_ASPECT?[1,IMG_ASPECT/A]:[A/IMG_ASPECT,1];
+      const Hv=visH(),A=W/Hv;gl.uniform1f(U.uFr,Hv/H);
+      const span=A>IMG_ASPECT?[1,IMG_ASPECT/A]:[A/IMG_ASPECT,1];
       gl.uniform2fv(U.uSpan,span);gl.uniform2fv(U.uC,c.c);gl.uniform2fv(U.uPar,c.par);
       gl.uniform1f(U.uZ,c.z);gl.uniform1f(U.uRoll,c.roll);gl.uniform1f(U.uFocus,c.focus);
       gl.uniform1f(U.uDark,c.dark);gl.uniform1f(U.uVig,c.vig);gl.uniform1f(U.uTime,c.time);
-      // Fotopixel quer über den Bildschirm: unter ~600 wird das Foto weich, dann Blur, Korn und Tunnel hochfahren (geräteunabhängig)
-      const vis=span[0]*2000/c.z;
-      gl.uniform1f(U.uBlur,.18*smooth((600-vis)/480));gl.uniform1f(U.uGrain,.018+.05*smooth((600-vis)/500));gl.uniform1f(U.uTun,smooth((250-vis)/190));
+      // CSS-Pixel pro Fotopixel: ab ~2.5x wird das Foto weich, dann Blur, Korn und Tunnel hochfahren
+      const mag=W*c.z/(span[0]*2000);
+      gl.uniform1f(U.uBlur,.18*smooth((mag-2.5)/12));gl.uniform1f(U.uGrain,.018+.05*smooth((mag-2.5)/18));gl.uniform1f(U.uTun,smooth((mag-6)/22));
       gl.drawArrays(gl.TRIANGLES,0,3);
     }};
 }
@@ -190,6 +195,8 @@ function initFahrt(hero,ctl){
     }
     const kick=()=>{if(!raf&&visible){last=performance.now();raf=requestAnimationFrame(frame);}};
     new IntersectionObserver(([en])=>{visible=en.isIntersecting;kick();}).observe(hero);
+    // Safari-Leisten ein-/ausfahren ändert die sichtbare Höhe ohne Größenänderung der Bühne
+    window.visualViewport?.addEventListener(`resize`,kick);
     hero.dataset.scene=`ready`;
     ctl.register({render(e){progress=e;kick();},resize(w,h){scene.resize(w,h);kick();}});
     document.dispatchEvent(new CustomEvent(`rw:hero-ready`));
