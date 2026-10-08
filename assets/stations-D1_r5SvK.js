@@ -1,0 +1,1 @@
+var e=[0,.18,.45,.72,1];function t(t){let n=Math.min(1,Math.max(0,Number.isFinite(t)?t:0)),r=e.length-2,i=0;for(let t=1;t<=r;t++)n>=e[t]&&(i=t);let a=e[i],o=e[i+1];return{index:i,local:(n-a)/(o-a)}}export{t as n,e as t};
