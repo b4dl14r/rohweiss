@@ -10,26 +10,53 @@ const EYE_ZOOM=46;               // Endzoom ins Auge (relativ zur Kopf-Einstellu
 const BG=[239/255,235/255,226/255];
 const FG=[11/255,11/255,10/255];
 
-const VS=`attribute vec2 p;varying vec2 vS;void main(){vS=p*.5+.5;vS.y=1.-vS.y;gl_Position=vec4(p,0.,1.);}`;
-const FS=`precision highp float;
+// Shader für WebGL2 und WebGL1 aus einer Quelle; GL2 wählt die Mipmap über die Kamera statt über die Verschiebung (keine Nahtlinien)
+function shaders(gl2){
+  const v=gl2?`#version 300 es
+#define attribute in
+#define varying out
+`:``;
+  const f=gl2?`#version 300 es
+precision highp float;
+#define varying in
+#define DEP(uv) textureLod(uDep,uv,0.)
+#define IMG(uv) textureGrad(uImg,uv,dx,dy)
+out vec4 fragOut;
+#define gl_FragColor fragOut
+`:`#extension GL_OES_standard_derivatives : enable
+#define DEP(uv) texture2D(uDep,uv)
+#define IMG(uv) texture2D(uImg,uv)
+`;
+  return[v+`attribute vec2 p;varying vec2 vS;void main(){vS=p*.5+.5;vS.y=1.-vS.y;gl_Position=vec4(p,0.,1.);}`,
+f+`precision highp float;
 varying vec2 vS;
 uniform sampler2D uImg,uDep;
 uniform vec2 uSpan,uC,uPar,uPx;
 uniform float uZ,uRoll,uFocus,uDark,uVig,uTime;
 uniform vec3 uBg,uFg;
-float dep(vec2 uv){return texture2D(uDep,clamp(uv,0.,1.)).r;}
+float dep(vec2 uv){return DEP(clamp(uv,0.,1.)).r;}
 float hash(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
 void main(){
   vec2 s=vS-.5;
   float cr=cos(uRoll),sr=sin(uRoll);
   s=vec2(cr*s.x-sr*s.y,sr*s.x+cr*s.y);
   vec2 base=uC+s*uSpan/uZ;
-  vec2 uv=base;
-  for(int i=0;i<6;i++){uv=base-uPar*(dep(uv)-uFocus);}
-  vec2 cuv=clamp(uv,vec2(0.,0.),vec2(1.,1.));
-  vec4 t=texture2D(uImg,cuv);
-  float inside=step(0.,uv.x)*step(uv.x,1.)*step(0.,uv.y);
-  t*=inside;
+  vec2 dx=dFdx(base),dy=dFdy(base);
+  // Parallax-Occlusion: von nah (t=1) nach fern (t=0) die erste getroffene Fläche suchen.
+  // Faltet nicht an steilen Tiefenkanten, nahe Flächen verdecken ferne sauber.
+  float tP=1.,hP=dep(base-uPar*(1.-uFocus))-1.,hit=step(0.,hP);
+  vec2 uv=base-uPar*(1.-uFocus);
+  for(int i=1;i<=24;i++){
+    float t=1.-float(i)/24.;
+    float h=dep(base-uPar*(t-uFocus))-t;
+    if(hit<.5&&h>=0.){
+      float tt=mix(tP,t,hP/(hP-h));
+      uv=base-uPar*(tt-uFocus);hit=1.;
+    }
+    tP=t;hP=h;
+  }
+  vec4 t=IMG(clamp(uv,0.,1.));
+  t*=step(0.,uv.x)*step(uv.x,1.)*step(0.,uv.y);
   vec3 col=uBg*(1.-t.a)+t.rgb;
   // weiches Abdunkeln zum Rand, wächst mit der Fahrt ins Auge
   float r=length((vS-.5)*vec2(uPx.x/uPx.y,1.));
@@ -37,7 +64,8 @@ void main(){
   col=mix(col,uFg,clamp(vig+uDark,0.,1.));
   col+=(hash(vS*uPx+fract(uTime))-.5)*.018;
   gl_FragColor=vec4(col,1.);
-}`;
+}`];
+}
 
 function loadImage(src){return new Promise((ok,no)=>{const i=new Image;i.decoding=`async`;i.onload=()=>ok(i);i.onerror=no;i.src=src;});}
 function pot(img,w,h){const c=document.createElement(`canvas`);c.width=w;c.height=h;c.getContext(`2d`).drawImage(img,0,0,w,h);return c;}
@@ -48,8 +76,11 @@ function createScene(host){
   const canvas=document.createElement(`canvas`);
   canvas.className=`hero__canvas`;
   host.append(canvas);
-  const gl=canvas.getContext(`webgl`,{antialias:!1,alpha:!1,premultipliedAlpha:!1});
+  const opts={antialias:!1,alpha:!1,premultipliedAlpha:!1};
+  let gl=canvas.getContext(`webgl2`,opts);const gl2=!!gl;
+  if(!gl){gl=canvas.getContext(`webgl`,opts);gl&&gl.getExtension(`OES_standard_derivatives`);}
   if(!gl)return{ready:Promise.reject(Error(`webgl`))};
+  const[VS,FS]=shaders(gl2);
   const sh=(type,src)=>{const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s;};
   const prog=gl.createProgram();
   gl.attachShader(prog,sh(gl.VERTEX_SHADER,VS));gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,FS));gl.linkProgram(prog);gl.useProgram(prog);
@@ -71,7 +102,8 @@ function createScene(host){
   gl.uniform3fv(U.uBg,BG);gl.uniform3fv(U.uFg,FG);
   const coarse=window.matchMedia(`(pointer: coarse)`).matches;
   const ready=Promise.all([loadImage(`${BASE}bild.webp`),loadImage(`${BASE}bild_tiefe.png`)]).then(([img,dep])=>{
-    tex(0,pot(img,2048,1024));tex(1,pot(dep,1024,512));
+    // WebGL2 kann Mipmaps in Originalgröße, WebGL1 braucht Zweierpotenzen
+    tex(0,gl2?img:pot(img,2048,1024));tex(1,gl2?dep:pot(dep,1024,512));
     gl.uniform1i(U.uImg,0);gl.uniform1i(U.uDep,1);
   });
   let W=1,H=1;
@@ -93,7 +125,8 @@ function shot(e,[W,H],ptr,time){
   const A=W/H,span=A>IMG_ASPECT?[1,IMG_ASPECT/A]:[A/IMG_ASPECT,1];
   const k=easeInOut(a);
   // Startbild: Kopf so weit wie möglich mittig, ohne den Bildrand zu zeigen
-  const z0=1.04,hx=span[0]/2/z0;
+  // Hochkant zeigt rund ein Drittel der Bildbreite (Kopf und Schultern, unten bündig), quer füllt es
+  const z0=Math.min(1.04,span[0]/.3),hx=span[0]/2/z0;
   const c0=[Math.min(Math.max(.66,hx),1-hx),.5];
   const zA=z0*(HEAD_ZOOM/z0)**k;
   // Bogen statt Gerade: Kamera schwingt leicht über den Kopf
@@ -107,9 +140,9 @@ function shot(e,[W,H],ptr,time){
     c=[EYE[0]+(c[0]-EYE[0])/zb,EYE[1]+(c[1]-EYE[1])/zb];
   }
   // Seitwärtsfahrt der Kamera: erzeugt die Tiefenparallaxe, klingt beim Eintauchen ins Auge ab
-  const sway=1/Math.sqrt(z);
+  const sway=Math.min(1,1/Math.sqrt(z));
   const idle=[Math.sin(time*.37)*.004+Math.sin(time*.13)*.003,Math.cos(time*.29)*.003];
-  const par=[(.035*(1-k)-.02*arc+idle[0]+ptr[0]*.012)*sway,(.012*(1-k)+.014*arc+idle[1]+ptr[1]*.008)*sway];
+  const par=[(.028*(1-k)-.016*arc+idle[0]+ptr[0]*.01)*sway,(.01*(1-k)+.012*arc+idle[1]+ptr[1]*.007)*sway];
   const roll=(.012*(1-k)-.018*arc)*(1-b)+Math.sin(time*.21)*.002;
   // Unterkante des Fotos (Büste abgeschnitten) nie ins Bild lassen, inkl. Drehung und Parallaxe
   const hy=span[1]/2/z+Math.abs(roll)*span[0]/2/z;
